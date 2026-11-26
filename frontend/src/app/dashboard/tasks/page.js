@@ -49,6 +49,7 @@ export default function TasksPage() {
   const [selectedFiles, setSelectedFiles] = useState({});
   const [evidenceLinks, setEvidenceLinks] = useState({});
   const [notes, setNotes] = useState({});
+  const [editingEvidence, setEditingEvidence] = useState({});
   const [feedbacks, setFeedbacks] = useState({});
   const [busyTask, setBusyTask] = useState(null);
   const [focusedTask, setFocusedTask] = useState("");
@@ -154,6 +155,7 @@ export default function TasksPage() {
       setSelectedFiles((current) => ({ ...current, [task.id]: null }));
       setEvidenceLinks((current) => ({ ...current, [task.id]: "" }));
       setNotes((current) => ({ ...current, [task.id]: "" }));
+      setEditingEvidence((current) => ({ ...current, [task.id]: false }));
       await loadPage();
     } catch (submitError) {
       setError(submitError.message || "Gagal mengirim bukti tugas.");
@@ -292,7 +294,9 @@ export default function TasksPage() {
         ) : tasks.map((task) => {
           const submission = task.submissions?.[0];
           const isDone = ["done", "completed"].includes(task.status);
+          const needsRevision = submission?.status === "needs_revision";
           const canSubmit = !isManager && !isDone && submission?.status !== "pending" && submission?.status !== "approved";
+          const showEvidenceForm = canSubmit && (!needsRevision || editingEvidence[task.id]);
 
           return (
             <article id={`task-${task.id}`} key={task.id} className={`space-y-4 rounded-2xl border bg-white p-4 shadow-sm transition-colors sm:p-5 ${focusedTask === String(task.id) ? "border-violet-300 ring-2 ring-violet-100" : "border-slate-100"}`}>
@@ -337,6 +341,15 @@ export default function TasksPage() {
                   {submission.note && <p className="mt-2 text-xs text-slate-600">{submission.note}</p>}
                   {submission.feedback && <p className="mt-2 rounded-lg bg-white p-2 text-xs text-amber-800">Catatan mentor: {submission.feedback}</p>}
 
+                  {!isManager && needsRevision && !editingEvidence[task.id] && (
+                    <button
+                      onClick={() => setEditingEvidence((current) => ({ ...current, [task.id]: true }))}
+                      className="mt-3 rounded-lg bg-amber-600 px-3 py-2 text-[10px] font-bold text-white hover:bg-amber-700"
+                    >
+                      Perbaiki & kirim ulang jawaban
+                    </button>
+                  )}
+
                   {isManager && submission.status === "pending" && (
                     <div className="mt-3 space-y-2 border-t border-slate-200 pt-3">
                       <label className="block space-y-1 text-[10px] font-bold text-slate-500">
@@ -352,9 +365,20 @@ export default function TasksPage() {
                 </div>
               )}
 
-              {canSubmit && (
+              {showEvidenceForm && (
                 <div className="space-y-3 rounded-xl border border-violet-100 bg-violet-50/40 p-3">
-                  <p className="text-xs font-bold text-violet-800">{submission?.status === "needs_revision" ? "Kirim bukti perbaikan" : "Kirim bukti hasil tugas"}</p>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs font-bold text-violet-800">{needsRevision ? "Perbarui jawaban tugas" : "Kirim bukti hasil tugas"}</p>
+                    {needsRevision && (
+                      <button
+                        onClick={() => setEditingEvidence((current) => ({ ...current, [task.id]: false }))}
+                        className="text-[10px] font-bold text-slate-500 hover:text-slate-700"
+                      >
+                        Batal
+                      </button>
+                    )}
+                  </div>
+                  {needsRevision && <p className="text-[10px] text-slate-600">Perbarui bukti sesuai catatan mentor, lalu kirim ulang untuk diperiksa.</p>}
                   <p className="text-[10px] text-slate-500">Unggah file atau tempel tautan; keduanya juga boleh diisi.</p>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <label className="block space-y-1 text-[10px] font-bold text-slate-600">
@@ -370,7 +394,7 @@ export default function TasksPage() {
                   </div>
                   <textarea value={notes[task.id] || ""} onChange={(event) => setNotes({ ...notes, [task.id]: event.target.value })} rows={2} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs" placeholder="Catatan singkat hasil pekerjaan (opsional)" />
                   <button disabled={busyTask === task.id || (!selectedFiles[task.id] && !(evidenceLinks[task.id] || "").trim())} onClick={() => handleSubmitEvidence(task)} className="rounded-lg bg-violet-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50">
-                    {busyTask === task.id ? "Mengirim..." : "Kirim untuk diperiksa"}
+                    {busyTask === task.id ? "Mengirim..." : needsRevision ? "Kirim ulang untuk diperiksa" : "Kirim untuk diperiksa"}
                   </button>
                 </div>
               )}

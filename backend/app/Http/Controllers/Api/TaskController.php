@@ -521,7 +521,7 @@ class TaskController extends Controller
         $result['task_comments'] = $task->comments->map(fn (TaskComment $comment) => $this->serializeComment($comment));
         $result['task_history'] = $task->history;
         $result['submissions'] = $task->submissions
-            ->sortByDesc('created_at')
+            ->sortByDesc('id')
             ->map(fn (TaskSubmission $submission) => $this->serializeSubmission($submission))
             ->values();
 

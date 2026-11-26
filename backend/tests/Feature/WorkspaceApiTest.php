@@ -418,6 +418,60 @@ class WorkspaceApiTest extends TestCase
         Notification::assertSentTo($member, TaskNotification::class);
     }
 
+    public function test_intern_can_resubmit_evidence_after_revision_request(): void
+    {
+        Notification::fake();
+        Storage::fake('local');
+        $mentor = $this->user('mentor', 'active');
+        $member = $this->user('pemagang', 'active', 'Ayu Pratama');
+        $group = Group::create([
+            'name' => 'Tim Statistik',
+            'mentor_id' => $mentor->id,
+            'created_by' => $mentor->id,
+        ]);
+        GroupMember::create(['group_id' => $group->id, 'user_id' => $member->id]);
+        $task = Task::create([
+            'group_id' => $group->id,
+            'created_by' => $mentor->id,
+            'assigned_to' => $member->id,
+            'title' => 'Rekap hasil',
+            'status' => 'todo',
+        ]);
+        $endpoint = "/api/tasks/{$task->id}/submissions";
+
+        $original = $this->actingAs($member)->post($endpoint, [
+            'file' => UploadedFile::fake()->createWithContent('hasil-awal.pdf', '%PDF-1.4 hasil awal'),
+        ])->assertCreated();
+        $originalId = $original->json('id');
+
+        $this->actingAs($mentor)->patchJson("/api/task-submissions/{$originalId}/review", [
+            'status' => 'needs_revision',
+            'feedback' => 'Tambahkan bukti pendukung.',
+        ])->assertOk()->assertJsonPath('status', 'needs_revision');
+
+        $revised = $this->actingAs($member)->post($endpoint, [
+            'file' => UploadedFile::fake()->createWithContent('hasil-revisi.pdf', '%PDF-1.4 hasil revisi'),
+        ])->assertCreated()
+            ->assertJsonPath('status', 'pending')
+            ->assertJsonPath('file_name', 'hasil-revisi.pdf');
+        $revisedId = $revised->json('id');
+
+        $this->assertNotSame($originalId, $revisedId);
+        $this->assertDatabaseHas('task_submissions', [
+            'id' => $originalId,
+            'status' => 'needs_revision',
+            'feedback' => 'Tambahkan bukti pendukung.',
+        ]);
+        $this->assertDatabaseHas('tasks', ['id' => $task->id, 'status' => 'in_review']);
+        $this->actingAs($member)->getJson('/api/tasks')
+            ->assertOk()
+            ->assertJsonPath('0.submissions.0.id', $revisedId)
+            ->assertJsonPath('0.submissions.0.status', 'pending');
+        $this->actingAs($member)->post($endpoint, [
+            'file' => UploadedFile::fake()->createWithContent('duplikat.pdf', '%PDF-1.4 duplikat'),
+        ])->assertUnprocessable();
+    }
+
     public function test_intern_can_submit_link_evidence_and_only_http_urls_are_accepted(): void
     {
         Notification::fake();
