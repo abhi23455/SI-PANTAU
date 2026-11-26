@@ -1,0 +1,26 @@
+# Dependencies and generated output
+/node_modules/
+**/node_modules/
+**/vendor/
+**/.next/
+**/bootstrap/cache/*.php
+**/storage/logs/*.log
+**/*.sqlite
+**/*.sqlite3
+**/*.db
+
+# Local environment files
+.env
+.env.*
+**/.env
+**/.env.*
+!**/.env.example
+
+# Local exports and temporary development files
+/laporan-tugas-naya.csv
+/frontend/schema_dump.json
+/frontend/test_email.js
+/frontend/check-schema.mjs
+/frontend/test-table.mjs
+/frontend/AGENTS.md
+/frontend/CLAUDE.md

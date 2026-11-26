@@ -1,0 +1,441 @@
+"use client";
+
+import React from "react";
+import { formatRelativeTime } from "../../../../lib/formatTime";
+import { exportTaskReport } from "../../../../backend/dashboard";
+
+function parseTaskDate(dateStr) {
+  if (!dateStr) return null;
+  const parts = dateStr.trim().split(" ");
+  if (parts.length < 3) return null;
+  const day = parseInt(parts[0]);
+  const year = parseInt(parts[2]);
+  const monthStr = parts[1].toLowerCase();
+  const fullMonths = ["januari","februari","maret","april","mei","juni","juli","agustus","september","oktober","november","desember"];
+  const shortMonths = ["jan","feb","mar","apr","mei","jun","jul","agu","sep","okt","nov","des"];
+  let month = fullMonths.findIndex(m => monthStr.startsWith(m.substring(0,3)));
+  if (month === -1) month = shortMonths.findIndex(m => monthStr.startsWith(m.substring(0,3)));
+  if (isNaN(day) || isNaN(year) || month === -1) return null;
+  return { day, month, year };
+}
+
+function isOverdue(task) {
+  if (task.status === "done") return false;
+  const parsed = parseTaskDate(task.date);
+  if (!parsed) return false;
+  const taskDate = new Date(parsed.year, parsed.month, parsed.day);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return taskDate < today;
+}
+
+// Retrieve proper avatar for a user dynamically
+const getUserAvatar = (name) => {
+  const currentName = typeof window !== "undefined" ? localStorage.getItem("sipantau_name") : null;
+  const currentEmail = typeof window !== "undefined" ? localStorage.getItem("sipantau_email") : null;
+  if (currentName && name && currentName.trim().toLowerCase() === name.trim().toLowerCase()) {
+    const stored = typeof window !== "undefined" ? localStorage.getItem(`sipantau_avatar_${currentEmail.toLowerCase()}`) : null;
+    if (stored) return stored;
+  }
+  if (name === "Myesha Azka") return "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=50&h=50&q=80";
+  if (name === "Nurul Kumala") return "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&w=50&h=50&q=80";
+  return `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=f1f5f9&color=64748b&bold=true`;
+};
+
+export default function TabDashboard({ tasks = [], teamLogs = [], team = null, role = "pemagang", currentUserId = null }) {
+  const [, setTick] = React.useState(0);
+  const [statusFilter, setStatusFilter] = React.useState("");
+  const [priorityFilter, setPriorityFilter] = React.useState("");
+  const [dueFrom, setDueFrom] = React.useState("");
+  const [dueTo, setDueTo] = React.useState("");
+
+  // Ticker to auto-update relative timestamps in real-time
+  React.useEffect(() => {
+    const timer = setInterval(() => setTick(t => t + 1), 5000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const isIntern = role === "pemagang" || role === "intern";
+  const scopedTasks = isIntern
+    ? tasks.filter((task) => task.assigned_to === currentUserId)
+    : tasks;
+
+  // Filter out deleted tasks for charts
+  const activeTasks = scopedTasks.filter(t => {
+    if (t.status === "deleted") return false;
+    if (statusFilter) {
+      const statusMap = { inprogress: "in_progress", review: "in_review" };
+      const normalizedStatus = statusMap[t.status] || t.status;
+      if (normalizedStatus !== statusFilter) return false;
+    }
+    if (priorityFilter) {
+      const priorityMap = {
+        Tertinggi: "urgent",
+        Tinggi: "high",
+        Sedang: "medium",
+        Rendah: "low",
+        Terendah: "lowest",
+      };
+      const normalizedPriority = priorityMap[t.priority] || (t.priority || "").toLowerCase();
+      if (normalizedPriority !== priorityFilter.toLowerCase()) return false;
+    }
+
+    const parsed = parseTaskDate(t.date);
+    if ((dueFrom || dueTo) && parsed) {
+      const taskDate = new Date(parsed.year, parsed.month, parsed.day).toISOString().slice(0, 10);
+      if (dueFrom && taskDate < dueFrom) return false;
+      if (dueTo && taskDate > dueTo) return false;
+    }
+    return true;
+  });
+
+  // 1. Stats Row calculations using activeTasks
+  const selesai = activeTasks.filter(t => t.status === "done").length;
+  const dijadwalkan = activeTasks.filter(t => t.status === "todo").length;
+  const diperbarui = activeTasks.filter(t => t.status === "inprogress" || t.status === "review").length;
+  const terlambat = activeTasks.filter(isOverdue).length;
+
+  // 2. Priority Chart calculations (Case-insensitive)
+  const priorities = ["Tertinggi", "Tinggi", "Sedang", "Rendah", "Terendah"];
+  const priorityCounts = priorities.map(prio =>
+    activeTasks.filter(t => t.priority && t.priority.toLowerCase() === prio.toLowerCase()).length
+  );
+  const maxPriorityCount = Math.max(...priorityCounts, 1);
+
+  // 3. Type Chart calculations (Case-insensitive & Dynamic)
+  const defaultTypes = ["Design", "Bug", "Aset", "Fitur", "Tugas"];
+  const types = Array.from(new Set([
+    ...defaultTypes,
+    ...activeTasks.map(t => t.type).filter(Boolean)
+  ]));
+  const typeCounts = types.map(type =>
+    activeTasks.filter(t => t.type && t.type.toLowerCase() === type.toLowerCase()).length
+  );
+  const maxTypeCount = Math.max(...typeCounts, 1);
+
+  // 4. Activity Logs (Extract and sort by recency - newest first)
+  const baseLogs = scopedTasks.flatMap(t => (t.riwayat || []).map(r => ({ ...r, taskTitle: t.title })));
+  
+  const additionalLogs = teamLogs.filter(a => a.description && a.description.includes("telah menghapus")).map(a => {
+    let taskName = "Tugas";
+    const descParts = a.description.split("tugas");
+    if (descParts.length > 1 && descParts[1].trim()) {
+      taskName = descParts[1].trim();
+    }
+    return {
+      name: a.profiles?.full_name || 'User',
+      text: "telah menghapus tugas",
+      taskTitle: taskName,
+      created_at: a.created_at,
+      time: "baru saja"
+    };
+  });
+
+  const logs = [...baseLogs, ...additionalLogs]
+    .sort((a, b) => {
+      const getTimestamp = (item) => {
+        if (item.created_at) {
+          const t = new Date(item.created_at).getTime();
+          if (!isNaN(t)) return t;
+        }
+        if (item.time === "baru saja") return Date.now();
+        return 0;
+      };
+      return getTimestamp(b) - getTimestamp(a);
+    })
+    .slice(0, 30); // Show top 30 sorted activities for scrolling
+
+  const priorityColors = {
+    "Tertinggi": "bg-[#fca5a5]", // Soft pink/rose-300
+    "Tinggi": "bg-[#a7f3d0]",    // Soft green/emerald-200
+    "Sedang": "bg-[#fed7aa]",    // Soft orange/amber-200
+    "Rendah": "bg-[#cffafe]",    // Soft cyan-100
+    "Terendah": "bg-[#ddd6fe]"   // Soft violet-200
+  };
+
+  const typeColors = {
+    "Design": "bg-[#ddd6fe]",
+    "Bug": "bg-[#cffafe]",
+    "Aset": "bg-[#fed7aa]",
+    "Fitur": "bg-[#fca5a5]",
+    "Tugas": "bg-[#c7d2fe]"
+  };
+
+  const getTypeColor = (type) => typeColors[type] || "bg-[#c7d2fe]";
+
+  const handleExport = async () => {
+    try {
+      const csv = await exportTaskReport({
+        group_id: team?.id,
+        status: statusFilter,
+        priority: priorityFilter,
+        due_from: dueFrom,
+        due_to: dueTo,
+      });
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "laporan-tugas-sipantau-2.0.csv";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      alert(error.message || "Gagal mengekspor laporan.");
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className={`rounded-2xl border px-4 py-3 ${isIntern ? "border-violet-100 bg-violet-50/60" : "border-sky-100 bg-sky-50/60"}`}>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className={`text-xs font-extrabold ${isIntern ? "text-violet-700" : "text-sky-700"}`}>
+              {isIntern ? "Dashboard Tugas Saya" : "Dashboard Tinjauan Tim"}
+            </p>
+            <p className="mt-1 text-[10px] font-medium text-slate-500">
+              {isIntern
+                ? "Hanya menampilkan tugas yang ditugaskan kepada Anda."
+                : "Menampilkan progres dan seluruh penugasan dalam kelompok ini."}
+            </p>
+          </div>
+          <span className="rounded-full border border-white bg-white/80 px-3 py-1 text-[10px] font-bold text-slate-600 shadow-sm">
+            {isIntern ? "Pemagang" : (role === "admin" ? "Administrator" : "Mentor")}
+          </span>
+        </div>
+      </div>
+      <div className="flex flex-col xl:flex-row xl:items-end gap-3 rounded-2xl border border-slate-100 p-4 bg-slate-50/50">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 flex-1">
+          <label className="space-y-1">
+            <span className="text-[10px] font-bold text-slate-500">Status</span>
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="w-full h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-violet-400">
+              <option value="">Semua status</option>
+              <option value="todo">Dijadwalkan</option>
+              <option value="in_progress">Diperbarui</option>
+              <option value="in_review">Ditinjau</option>
+              <option value="done">Selesai</option>
+            </select>
+          </label>
+          <label className="space-y-1">
+            <span className="text-[10px] font-bold text-slate-500">Prioritas</span>
+            <select value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value)} className="w-full h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-violet-400">
+              <option value="">Semua prioritas</option>
+              <option value="urgent">Tertinggi</option>
+              <option value="high">Tinggi</option>
+              <option value="medium">Sedang</option>
+              <option value="low">Rendah</option>
+              <option value="lowest">Terendah</option>
+            </select>
+          </label>
+          <label className="space-y-1">
+            <span className="text-[10px] font-bold text-slate-500">Deadline dari</span>
+            <input type="date" value={dueFrom} onChange={(event) => setDueFrom(event.target.value)} className="w-full h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-violet-400" />
+          </label>
+          <label className="space-y-1">
+            <span className="text-[10px] font-bold text-slate-500">Deadline sampai</span>
+            <input type="date" value={dueTo} onChange={(event) => setDueTo(event.target.value)} className="w-full h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-violet-400" />
+          </label>
+        </div>
+        <button
+          onClick={handleExport}
+          className="h-9 px-4 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold shadow-sm shrink-0"
+        >
+          Ekspor CSV
+        </button>
+      </div>
+
+      {/* Stats Cards Row */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {[
+          {
+            icon: (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+              </svg>
+            ),
+            color: "emerald",
+            value: `${selesai} Selesai`,
+            desc: "Tugas yang sudah terselesaikan."
+          },
+          {
+            icon: (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            ),
+            color: "blue",
+            value: `${dijadwalkan} Dijadwalkan`,
+            desc: "Tugas yang segera dimulai."
+          },
+          {
+            icon: (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            ),
+            color: "amber",
+            value: `${diperbarui} Diperbarui`,
+            desc: "Perubahan dalam penugasan."
+          },
+          {
+            icon: (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            ),
+            color: "rose",
+            value: `${terlambat} Terlambat`,
+            desc: "Penugasan melewati batas waktu."
+          },
+        ].map((stat) => (
+          <div key={stat.value} className="p-4 border border-slate-100 bg-white rounded-2xl shadow-sm flex flex-col justify-between min-h-[85px]">
+            <div className="flex items-center gap-2">
+              <div className={`w-5 h-5 rounded-full border border-${stat.color}-500 flex items-center justify-center text-${stat.color}-500 font-extrabold text-[10px] shrink-0`}>
+                {stat.icon}
+              </div>
+              <span className="text-xs font-extrabold text-slate-800">{stat.value}</span>
+            </div>
+            <span className="text-[10px] font-semibold text-slate-400 mt-2">{stat.desc}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Charts Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        
+        {/* Rincian Prioritas Chart (Vertical Bars) */}
+        <div className="bg-white border border-slate-100 rounded-2xl p-5 shadow-sm space-y-4">
+          <div>
+            <h3 className="text-xs sm:text-sm font-extrabold text-slate-800">Rincian Prioritas</h3>
+            <p className="text-[10px] text-slate-400 font-medium">Rincian banyak item pekerjaan berdasarkan prioritasnya.</p>
+          </div>
+
+          <div className="relative h-48 border-b border-slate-200 flex items-end justify-between px-6 pb-2 pt-6">
+            {/* Grid Y-Axis lines and numbers */}
+            <div className="absolute left-[-15px] bottom-2 text-[9px] text-slate-400 font-bold">0</div>
+            <div className="absolute left-[-15px] bottom-[50%] -translate-y-1/2 text-[9px] text-slate-400 font-bold">
+              {Math.round(maxPriorityCount / 2)}
+            </div>
+            <div className="absolute left-[-15px] top-6 text-[9px] text-slate-400 font-bold">{maxPriorityCount}</div>
+
+            {/* Grid Line Helpers */}
+            <div className="absolute left-0 right-0 border-t border-dashed border-slate-200 top-[50%]" />
+            <div className="absolute left-0 right-0 border-t border-dashed border-slate-200 top-6" />
+
+            {/* Bars */}
+            {priorities.map((prio, idx) => {
+              const val = priorityCounts[idx];
+              const pct = (val / maxPriorityCount) * 100;
+              const bg = val > 0 ? priorityColors[prio] : "transparent";
+              const heightStyle = val > 0 ? `${pct}%` : "0%";
+              return (
+                <div key={prio} className="flex flex-col items-center justify-end h-[130px] relative z-10 w-14 sm:w-16">
+                  {/* Thick background column bar */}
+                  <div className="w-12 h-full bg-[#f1f5f9]/70 rounded-t-sm flex items-end overflow-hidden">
+                    {/* Active colored value filled from bottom */}
+                    <div 
+                      style={{ height: heightStyle }}
+                      className={`w-full transition-all duration-500 relative group ${bg}`}
+                    >
+                      {val > 0 && (
+                        <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-[9px] font-bold text-slate-700 bg-white border border-slate-100 px-1 rounded shadow-sm opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-25">
+                          {val}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-bold text-slate-500 whitespace-nowrap absolute -bottom-6">{prio}</span>
+                </div>
+              );
+            })}
+          </div>
+          <div className="h-3" /> {/* spacer for labels */}
+        </div>
+
+        {/* Jenis Pekerjaan Chart (Horizontal Bars) */}
+        <div className="bg-white border border-slate-100 rounded-2xl p-5 shadow-sm space-y-4">
+          <div>
+            <h3 className="text-xs sm:text-sm font-extrabold text-slate-800">Jenis Pekerjaan</h3>
+            <p className="text-[10px] text-slate-400 font-medium">Rincian banyak item pekerjaan berdasarkan jenisnya.</p>
+          </div>
+
+          {/* Dynamic Color Legend */}
+          <div className="flex flex-wrap gap-x-3.5 gap-y-1.5 text-[9px] font-bold text-slate-400 border-b border-slate-50/60 pb-2">
+            {types.map((type) => (
+              <div key={type} className="flex items-center gap-1.5">
+                <span className={`w-2.5 h-2.5 rounded-sm ${getTypeColor(type)}`} />
+                <span>{type}</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="space-y-3 pt-2">
+            {types.map((type, idx) => {
+              const val = typeCounts[idx];
+              const pct = (val / maxTypeCount) * 100;
+              const color = getTypeColor(type);
+              const widthStyle = val > 0 ? `${pct}%` : "0%";
+              return (
+                <div key={type} className="flex items-center gap-3">
+                  <span className="text-[10px] font-bold text-slate-500 w-12 text-right">{type}</span>
+                  <div className="flex-1 bg-slate-50 rounded-full h-4 relative overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${color} flex items-center justify-end pr-2 transition-all duration-500`}
+                      style={{ width: widthStyle }}
+                    >
+                      {val > 0 && (
+                        <span className="text-[9px] font-extrabold text-slate-700 leading-none">{val}</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            {/* Axis Label */}
+            <div className="flex justify-between pl-15 text-[8px] font-bold text-slate-400">
+              <span>0</span>
+              <span>{Math.round(maxTypeCount / 2)}</span>
+              <span>{maxTypeCount}</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      {/* Log Aktivitas */}
+      <div className="bg-white border border-slate-100 rounded-2xl p-6 shadow-sm space-y-4">
+        <div className="border-b border-slate-50 pb-4">
+          <h3 className="text-sm font-extrabold text-slate-800">Log Aktivitas Tim</h3>
+          <p className="text-[11px] text-slate-400 font-medium mt-1">Informasi terbaru mengenai aktivitas tugas di dalam tim ini.</p>
+        </div>
+
+        <div className="divide-y divide-slate-50/80 max-h-[250px] overflow-y-auto pr-2 custom-scrollbar">
+          {logs.length === 0 ? (
+            <div className="py-8 flex flex-col items-center justify-center text-center w-full">
+              <img src="/empty-activity.svg" alt="Belum ada Aktivitas" className="w-40 h-28 object-contain mb-3" />
+              <p className="text-xs font-bold text-slate-800">Belum ada Aktivitas</p>
+            </div>
+          ) : (
+            logs.map((log, index) => (
+              <div key={index} className="flex items-center justify-between py-3.5">
+                <div className="flex items-center gap-3.5">
+                  <img
+                    src={getUserAvatar(log.name)}
+                    alt="Avatar"
+                    className="w-8 h-8 rounded-full object-cover border border-slate-100"
+                  />
+                  <span className="text-[11px] text-slate-600 font-medium">
+                    <strong className="text-slate-800 font-bold">{log.name}</strong> {log.text}{" "}
+                    <span className="text-violet-600 font-bold hover:underline cursor-pointer">{log.taskTitle}</span>
+                  </span>
+                </div>
+                <span className="text-[10px] font-bold text-slate-400">{formatRelativeTime(log.created_at) || log.time}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

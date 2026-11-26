@@ -1,0 +1,8 @@
+{
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "dev:all": "powershell -ExecutionPolicy Bypass -File .\\start-dev.ps1",
+    "build": "npm --prefix frontend run build",
+    "start": "npm --prefix frontend run start"
+  }
+}

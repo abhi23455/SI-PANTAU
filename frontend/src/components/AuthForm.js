@@ -1,0 +1,592 @@
+"use client";
+
+import React, { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { signUpUser, signInUser } from "../backend/auth";
+import { apiRequest } from "../backend/client";
+
+export default function AuthForm({ defaultRole = "pemagang", onForgotPasswordChange, initialSignUp = false }) {
+  const router = useRouter();
+  const [isSignUp, setIsSignUp] = useState(initialSignUp);
+  const [showPassword, setShowPassword] = useState(false);
+  const [isForgotPassword, setIsForgotPassword] = useState(false);
+
+  useEffect(() => {
+    setIsSignUp(initialSignUp);
+  }, [initialSignUp]);
+
+  useEffect(() => {
+    if (onForgotPasswordChange) {
+      onForgotPasswordChange(isForgotPassword);
+    }
+  }, [isForgotPassword, onForgotPasswordChange]);
+
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotSuccess, setForgotSuccess] = useState(false);
+
+  // Form states
+  const [signInEmail, setSignInEmail] = useState("");
+  const [signInPassword, setSignInPassword] = useState("");
+
+  const [signUpName, setSignUpName] = useState("");
+  const [signUpEmail, setSignUpEmail] = useState("");
+  const [signUpPhone, setSignUpPhone] = useState("");
+  const [phoneError, setPhoneError] = useState("");
+  const [signUpAddress, setSignUpAddress] = useState("");
+  const [signUpRole, setSignUpRole] = useState(defaultRole);
+  const [signUpInstitution, setSignUpInstitution] = useState("");
+  const [signUpMajor, setSignUpMajor] = useState("");
+  const [signUpPassword, setSignUpPassword] = useState("");
+
+  const [statusMessage, setStatusMessage] = useState(null);
+  const [loginError, setLoginError] = useState(false);
+
+  // Helper to detect if email is a mentor email
+  const isMentorEmail = (email) => {
+    if (!email) return false;
+    const lowerEmail = email.toLowerCase();
+    return (
+      lowerEmail.endsWith("@bps.go.id") ||
+      lowerEmail.endsWith("@mentor.sipantau.com") ||
+      lowerEmail.includes("mentor")
+    );
+  };
+
+  // Clear any existing active session
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("sipantau_role");
+      localStorage.removeItem("sipantau_name");
+      localStorage.removeItem("sipantau_email");
+      localStorage.removeItem("sipantau_fullName");
+      localStorage.removeItem("sipantau_avatar");
+      localStorage.removeItem("sipantau_adminStats");
+      localStorage.removeItem("sipantau_personalStats");
+      localStorage.removeItem("sipantau_activityLogs");
+      localStorage.removeItem("sipantau_allUsers");
+      // Clear team caches
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key?.startsWith("sipantau_team_") || key?.startsWith("sipantau_tasks_")) {
+          localStorage.removeItem(key);
+        }
+      }
+    }
+  }, []);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+
+    if (isSignUp) {
+      if (signUpPhone.length > 15) {
+        setPhoneError("Nomor telepon maksimal 15 angka!");
+        return;
+      }
+      if (signUpPhone && !/^\d+$/.test(signUpPhone)) {
+        setPhoneError("Nomor telepon hanya boleh berisi angka (tidak boleh huruf/simbol)!");
+        return;
+      }
+
+      const finalRole = signUpRole || "pemagang";
+      const finalName = signUpName || "Pengguna Baru";
+      const finalEmail = signUpEmail || "baru@gmail.com";
+
+      // Save to Supabase backend
+      try {
+        await signUpUser({
+          email: finalEmail,
+          password: signUpPassword || "12345678",
+          name: finalName,
+          phone: signUpPhone || "08123456789",
+          address: signUpAddress || "-",
+          institution: signUpInstitution || "-",
+          major: signUpMajor || "-",
+          role: finalRole,
+        });
+      } catch (err) {
+        if (err.message?.toLowerCase().includes("user already registered") || err.message?.toLowerCase().includes("already exists")) {
+          alert("Email ini sudah pernah terdaftar di SIPANTAU 2.0! Jika Anda sempat dihapus Admin dan ingin mendaftar ulang, silakan masuk lewat menu LOGIN menggunakan kata sandi Anda sebelumnya, lalu klik tombol 'Koreksi & Ajukan Ulang'.");
+          return;
+        }
+        console.warn("Supabase signUp error:", err.message);
+        alert("Gagal mendaftar: " + err.message);
+        return;
+      }
+
+      // Redirect to verification view
+      router.push("/verification");
+    } else {
+      // Validation for empty inputs
+      if (!signInEmail || !signInPassword) {
+        setLoginError(true);
+        return;
+      }
+
+      // Try Supabase auth
+      try {
+        const { user, profile } = await signInUser(signInEmail, signInPassword);
+        if (profile) {
+          if (profile.status === "pending" || profile.status === "rejected") {
+            router.push("/verification");
+          } else {
+            router.push("/dashboard");
+          }
+          return;
+        }
+      } catch (err) {
+        console.warn("Supabase signIn error:", err.message);
+        setLoginError(true);
+        return;
+      }
+      
+      setLoginError(true);
+    }
+  };
+
+  const [isForgotLoading, setIsForgotLoading] = useState(false);
+
+  const handleForgotSubmit = async (e) => {
+    e.preventDefault();
+    if (!forgotEmail) return;
+
+    setIsForgotLoading(true);
+    try {
+      await apiRequest("/auth/password/forgot", {
+        method: "POST",
+        auth: false,
+        body: { email: forgotEmail },
+      });
+
+      setForgotSuccess(true);
+      // Removed the automatic redirection. 
+      // The user must click the link in their email to access the reset-password page.
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setIsForgotLoading(false);
+    }
+  };
+
+  if (isForgotPassword) {
+    return (
+      <div className="w-full max-w-[420px] flex flex-col py-6 px-5 sm:px-7 self-center rounded-[2rem] border border-white/80 bg-white/90 shadow-2xl backdrop-blur-md">
+        <div className="text-center mb-8">
+          <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-800 tracking-tight flex items-center justify-center gap-2">
+            Reset Password
+          </h2>
+          <p className="text-sm font-medium text-slate-500 mt-2">
+            Masukkan email Anda untuk menerima tautan pembaruan password.
+          </p>
+        </div>
+
+        {forgotSuccess && (
+          <div className="mb-6 bg-emerald-100/80 border border-emerald-200 text-emerald-700 px-4 py-3 rounded-xl flex items-center gap-3">
+            <div className="w-6 h-6 bg-emerald-500 rounded-md flex items-center justify-center shrink-0">
+              <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <p className="text-xs font-bold leading-tight">
+              Tautan reset password berhasil dikirim ke email Anda! Silakan cek kotak masuk atau folder spam Anda.
+            </p>
+          </div>
+        )}
+
+        <form onSubmit={handleForgotSubmit} className="flex flex-col gap-5">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-bold text-slate-700 flex items-center gap-0.5">
+              <span className="text-rose-500 font-bold">*</span> Alamat Email
+            </label>
+            <input
+              type="email"
+              value={forgotEmail}
+              onChange={(e) => setForgotEmail(e.target.value)}
+              placeholder="sipantau@gmail.com"
+              disabled={forgotSuccess || isForgotLoading}
+              className="w-full border border-slate-200 bg-slate-50/30 rounded-full px-5 py-3 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-all duration-200 disabled:opacity-50"
+              required
+            />
+          </div>
+
+          <div className="flex flex-col gap-3 mt-4">
+            <button
+              type="submit"
+              disabled={forgotSuccess || isForgotLoading}
+              className="w-full flex justify-center items-center gap-2 bg-violet-600 hover:bg-violet-700 active:bg-violet-800 text-white font-bold py-3 px-6 rounded-full shadow-lg shadow-violet-100 hover:shadow-violet-200 transition-all duration-200 text-sm cursor-pointer disabled:opacity-70"
+            >
+              {isForgotLoading ? (
+                <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+              ) : forgotSuccess ? "Tautan Terkirim" : "Kirim Tautan Reset"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setIsForgotPassword(false);
+                setForgotSuccess(false);
+                setForgotEmail("");
+              }}
+              disabled={forgotSuccess}
+              className="w-full bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold py-3 px-6 rounded-full transition-all duration-200 text-sm cursor-pointer disabled:opacity-50"
+            >
+              Kembali
+            </button>
+          </div>
+        </form>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`w-full max-w-[420px] flex flex-col py-6 px-5 sm:px-7 rounded-[2rem] border border-white/80 bg-white/90 shadow-2xl backdrop-blur-md ${isSignUp ? "h-[650px] justify-between self-stretch" : "self-center"}`}>
+      {/* Title */}
+      <div className="text-center mb-8">
+        <h2 className="text-center text-2xl sm:text-3xl font-extrabold text-slate-800 tracking-tight">
+          Hi, Selamat Datang di SIPANTAU 2.0 <span className="animate-bounce inline-block">👋</span>
+        </h2>
+      </div>
+
+      {/* Tabs Selector */}
+      <div className="bg-slate-200/80 p-1.5 rounded-full flex relative mb-8 w-full">
+        {/* Sliding background */}
+        <div
+          className={`absolute top-1.5 bottom-1.5 w-[calc(50%-6px)] bg-white rounded-full shadow-md transition-all duration-300 ease-in-out ${
+            isSignUp ? "left-[calc(50%+3px)]" : "left-1.5"
+          }`}
+        />
+
+        <button
+          type="button"
+          onClick={() => {
+            setIsSignUp(false);
+            setStatusMessage(null);
+          }}
+          className={`relative z-10 flex-1 text-center py-2.5 rounded-full text-sm font-bold transition-colors duration-300 ${
+            !isSignUp ? "text-violet-700" : "text-slate-500 hover:text-slate-700"
+          }`}
+        >
+          Sign In
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setIsSignUp(true);
+            setStatusMessage(null);
+          }}
+          className={`relative z-10 flex-1 text-center py-2.5 rounded-full text-sm font-bold transition-colors duration-300 ${
+            isSignUp ? "text-violet-700" : "text-slate-500 hover:text-slate-700"
+          }`}
+        >
+          Sign Up
+        </button>
+      </div>
+
+      {/* Authentication Form */}
+      <form onSubmit={handleSubmit} className={`flex flex-col ${isSignUp ? "flex-1 min-h-0" : "space-y-6"}`}>
+        <div className={isSignUp ? "flex-1 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] pr-1 space-y-5 transition-all duration-300" : "space-y-4"}>
+          {!isSignUp ? (
+            /* ==========================================
+               SIGN IN FORM
+               ========================================== */
+            <div className="space-y-4">
+              {/* Email Field */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-0.5">
+                  <span className="text-rose-500 font-bold">*</span> Alamat Email
+                </label>
+                <input
+                  type="email"
+                  value={signInEmail}
+                  onChange={(e) => {
+                    setSignInEmail(e.target.value);
+                    if (loginError) setLoginError(false);
+                  }}
+                  placeholder="nama@email.com"
+                  className={`w-full border rounded-full px-5 py-3 text-sm outline-none transition-all duration-200 ${
+                    loginError
+                      ? "border-rose-400 bg-rose-50/50 text-rose-600 placeholder-rose-300 focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+                      : "border-slate-200 bg-slate-50/30 text-slate-800 placeholder-slate-400 focus:border-violet-500 focus:ring-1 focus:ring-violet-500"
+                  }`}
+                />
+              </div>
+
+              {/* Password Field */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-0.5">
+                  <span className="text-rose-500 font-bold">*</span> Password
+                </label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={signInPassword}
+                    onChange={(e) => {
+                      setSignInPassword(e.target.value);
+                      if (loginError) setLoginError(false);
+                    }}
+                    placeholder="Masukkan password"
+                    className={`w-full border rounded-full pl-5 pr-20 py-3 text-sm outline-none transition-all duration-200 ${
+                      loginError
+                        ? "border-rose-400 bg-rose-50/50 text-rose-600 placeholder-rose-300 focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+                        : "border-slate-200 bg-slate-50/30 text-slate-800 placeholder-slate-400 focus:border-violet-500 focus:ring-1 focus:ring-violet-500"
+                    }`}
+                  />
+                  <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                    {loginError && (
+                      <svg className="w-4 h-4 text-rose-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className={`${loginError ? "text-rose-400 hover:text-rose-600" : "text-slate-400 hover:text-slate-600"} transition-colors duration-150 p-1`}
+                    >
+                      {showPassword ? (
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                        </svg>
+                      ) : (
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                </div>
+                {loginError && (
+                  <p className="text-[10px] text-rose-500 font-medium pl-2 mt-0.5">Password atau akun tidak valid</p>
+                )}
+              </div>
+
+              {/* Forgot Password Link */}
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={() => setIsForgotPassword(true)}
+                  className="text-[11px] font-bold text-slate-500 hover:text-violet-600 transition-colors underline decoration-slate-300 hover:decoration-violet-300 underline-offset-2"
+                >
+                  Lupa Password?
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* ==========================================
+               SIGN UP FORM
+               ========================================== */
+            <div className="space-y-4">
+              {/* Nama Field */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-0.5">
+                  <span className="text-rose-500 font-bold">*</span> Nama
+                </label>
+                <input
+                  type="text"
+                  value={signUpName}
+                  onChange={(e) => setSignUpName(e.target.value)}
+                  placeholder="Masukkan nama lengkap"
+                  className="w-full border border-slate-200 bg-slate-50/30 rounded-full px-5 py-2.5 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-all duration-200"
+                  required
+                />
+              </div>
+
+              {/* Email Field */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-0.5">
+                  <span className="text-rose-500 font-bold">*</span> Email
+                </label>
+                <input
+                  type="email"
+                  value={signUpEmail}
+                  onChange={(e) => setSignUpEmail(e.target.value)}
+                  placeholder="nama@email.com"
+                  className="w-full border border-slate-200 bg-slate-50/30 rounded-full px-5 py-2.5 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-all duration-200"
+                  required
+                />
+              </div>
+
+              {/* Nomor Telepon Field */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-0.5">
+                  <span className="text-rose-500 font-bold">*</span> Nomor Telepon
+                </label>
+                <input
+                  type="tel"
+                  value={signUpPhone}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setSignUpPhone(val);
+                    if (val && !/^\d+$/.test(val)) {
+                      setPhoneError("Nomor telepon hanya boleh berisi angka (tidak boleh huruf/simbol)!");
+                    } else if (val.length > 15) {
+                      setPhoneError("Nomor telepon maksimal 15 angka!");
+                    } else {
+                      setPhoneError("");
+                    }
+                  }}
+                  placeholder="Contoh: 0812345678"
+                  className="w-full border border-slate-200 bg-slate-50/30 rounded-full px-5 py-2.5 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-all duration-200"
+                  required
+                />
+                {phoneError && (
+                  <p className="text-[11px] text-rose-500 mt-1 font-semibold px-2">
+                    {phoneError}
+                  </p>
+                )}
+              </div>
+
+              {/* Alamat Rumah Field */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-0.5">
+                  <span className="text-rose-500 font-bold">*</span> Alamat Rumah
+                </label>
+                <input
+                  type="text"
+                  value={signUpAddress}
+                  onChange={(e) => setSignUpAddress(e.target.value)}
+                  placeholder="Masukkan alamat lengkap"
+                  className="w-full border border-slate-200 bg-slate-50/30 rounded-full px-5 py-2.5 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-all duration-200"
+                  required
+                />
+              </div>
+
+              {/* Role Radio buttons */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-0.5">
+                  <span className="text-rose-500 font-bold">*</span> Role
+                </label>
+                <div className="flex items-center gap-6 mt-1">
+                  <label className="flex items-center gap-2 cursor-pointer group">
+                    <input
+                      type="radio"
+                      name="signUpRole"
+                      value="pemagang"
+                      checked={signUpRole === "pemagang"}
+                      onChange={() => {
+                        setSignUpRole("pemagang");
+                        if (signUpInstitution === "BPS Kota Semarang") {
+                          setSignUpInstitution("");
+                        }
+                      }}
+                      className="sr-only"
+                    />
+                    <div className={`w-4 h-4 rounded-full border flex items-center justify-center transition-all duration-200 ${
+                      signUpRole === "pemagang" ? "border-violet-600 bg-white" : "border-slate-300 group-hover:border-slate-400"
+                    }`}>
+                      {signUpRole === "pemagang" && <div className="w-2 h-2 rounded-full bg-violet-600" />}
+                    </div>
+                    <span className="text-sm font-medium text-slate-700 group-hover:text-slate-900 transition-colors">Pemagang</span>
+                  </label>
+
+                  <label className="flex items-center gap-2 cursor-pointer group">
+                    <input
+                      type="radio"
+                      name="signUpRole"
+                      value="mentor"
+                      checked={signUpRole === "mentor"}
+                      onChange={() => {
+                        setSignUpRole("mentor");
+                        setSignUpInstitution("BPS Kota Semarang");
+                        setSignUpMajor("");
+                      }}
+                      className="sr-only"
+                    />
+                    <div className={`w-4 h-4 rounded-full border flex items-center justify-center transition-all duration-200 ${
+                      signUpRole === "mentor" ? "border-violet-600 bg-white" : "border-slate-300 group-hover:border-slate-400"
+                    }`}>
+                      {signUpRole === "mentor" && <div className="w-2 h-2 rounded-full bg-violet-600" />}
+                    </div>
+                    <span className="text-sm font-medium text-slate-700 group-hover:text-slate-900 transition-colors">Mentor</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Asal Instansi & Jurusan Fields (Side by Side) */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1.5" style={{ gridColumn: signUpRole === "mentor" ? "span 2 / span 2" : undefined }}>
+                  <label className="text-xs font-bold text-slate-700 flex items-center gap-0.5">
+                    <span className="text-rose-500 font-bold">*</span> Asal Instansi
+                  </label>
+                  <input
+                    type="text"
+                    value={signUpInstitution}
+                    onChange={(e) => setSignUpInstitution(e.target.value)}
+                    readOnly={signUpRole === "mentor"}
+                    placeholder={signUpRole === "mentor" ? "BPS Kota Semarang" : "Masukkan nama universitas / instansi"}
+                    className={`w-full border rounded-full px-5 py-2.5 text-sm text-slate-800 outline-none focus:ring-1 transition-all duration-200 ${
+                      signUpRole === "mentor"
+                        ? "border-slate-200 bg-slate-100/70 text-slate-500 cursor-not-allowed"
+                        : "border-slate-200 bg-slate-50/30 placeholder-slate-400 focus:border-violet-500 focus:ring-violet-500"
+                    }`}
+                    required
+                  />
+                </div>
+
+                {/* Jurusan / Jabatan Field */}
+                {signUpRole !== "mentor" && (
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-slate-700 flex items-center gap-0.5">
+                      <span className="text-rose-500 font-bold">*</span> Jurusan
+                    </label>
+                    <input
+                      type="text"
+                      value={signUpMajor}
+                      onChange={(e) => setSignUpMajor(e.target.value)}
+                      placeholder="Contoh: Teknik Komputer"
+                      className="w-full border border-slate-200 bg-slate-50/30 rounded-full px-5 py-2.5 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-all duration-200"
+                      required
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Password Field */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-0.5">
+                  <span className="text-rose-500 font-bold">*</span> Password
+                </label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={signUpPassword}
+                    onChange={(e) => setSignUpPassword(e.target.value)}
+                    placeholder="Masukkan password"
+                    className="w-full border border-slate-200 bg-slate-50/30 rounded-full pl-5 pr-12 py-2.5 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-all duration-200"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors duration-150 p-1"
+                  >
+                    {showPassword ? (
+                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                      </svg>
+                    ) : (
+                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Submit Button */}
+        <button
+          type="submit"
+          className="w-full bg-violet-600 hover:bg-violet-700 active:bg-violet-800 text-white font-bold py-3.5 px-6 rounded-full shadow-lg shadow-violet-100 hover:shadow-violet-200 transition-all duration-200 text-sm cursor-pointer mt-4"
+        >
+          {isSignUp ? "Daftar" : "Log In"}
+        </button>
+      </form>
+    </div>
+  );
+}
